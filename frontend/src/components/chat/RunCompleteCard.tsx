@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, useCallback } from "react";
+import { memo, useEffect, useState, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
 import { BarChart3, Code2, FileText, Loader2 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
@@ -21,9 +21,11 @@ export const RunCompleteCard = memo(function RunCompleteCard({ msg }: Props) {
   const [showPine, setShowPine] = useState(false);
   const [pineChecked, setPineChecked] = useState(false);
   const [pineExists, setPineExists] = useState(false);
+  const curveFetchedRef = useRef(false);
 
   useEffect(() => {
-    if (!curve && msg.runId) {
+    if (!curveFetchedRef.current && !curve && msg.runId) {
+      curveFetchedRef.current = true;
       api.getRun(msg.runId).then(r => {
         if (r.equity_curve) setCurve(r.equity_curve.map(e => ({ time: e.time, equity: e.equity })));
       }).catch(() => {});
@@ -92,7 +94,7 @@ export const RunCompleteCard = memo(function RunCompleteCard({ msg }: Props) {
               className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline inline-flex items-center gap-1.5 font-medium disabled:opacity-50"
             >
               {pineLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Code2 className="h-3.5 w-3.5" />}
-              Pine Script
+              {t.pineScript}
             </button>
           )}
           {msg.shadowId && (
@@ -103,7 +105,7 @@ export const RunCompleteCard = memo(function RunCompleteCard({ msg }: Props) {
               className="text-sm text-teal-600 dark:text-teal-400 hover:underline inline-flex items-center gap-1.5 font-medium"
             >
               <FileText className="h-3.5 w-3.5" />
-              Shadow Report
+              {t.shadowReport}
             </a>
           )}
         </div>

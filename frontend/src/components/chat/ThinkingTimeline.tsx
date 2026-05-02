@@ -32,7 +32,7 @@ export const ThinkingTimeline = memo(function ThinkingTimeline({ messages, isLat
   const toolLabel = (tool?: string): string => {
     if (!tool) return t.toolProcessing;
     const key = TOOL_I18N_KEY[tool];
-    return key ? (t as Record<string, string>)[key] || tool : tool;
+    return key ? (t as unknown as Record<string, string>)[key] || tool : tool;
   };
 
   useEffect(() => {

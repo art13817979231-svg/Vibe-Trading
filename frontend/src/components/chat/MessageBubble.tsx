@@ -7,12 +7,14 @@ import { formatTimestamp } from "@/lib/formatters";
 import type { AgentMessage } from "@/types/agent";
 import { AgentAvatar } from "./AgentAvatar";
 import { RunCompleteCard } from "./RunCompleteCard";
+import { useI18n } from "@/lib/i18n";
 
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeHighlight];
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
+  const { t } = useI18n();
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
@@ -23,22 +25,22 @@ function CopyButton({ text }: { text: string }) {
     <button
       onClick={handleCopy}
       className="absolute top-2 right-2 p-1.5 rounded-md bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-      title={copied ? "Copied" : "Copy"}
+      title={copied ? t.copied : t.copy}
     >
       {copied ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
     </button>
   );
 }
 
-function getRetryHint(content: string): string {
+function getRetryHint(content: string, t: Record<string, string>): string {
   const lower = content.toLowerCase();
   if (lower.includes("timeout") || lower.includes("timed out")) {
-    return "Execution timed out. Try simplifying the strategy or reducing the number of assets.";
+    return t.retryTimeout;
   }
   if (lower.includes("api") || lower.includes("rate limit") || lower.includes("429") || lower.includes("500") || lower.includes("502") || lower.includes("503")) {
-    return "API call failed. Please retry later.";
+    return t.retryApi;
   }
-  return "Execution failed. Click to retry.";
+  return t.retryDefault;
 }
 
 interface Props {
@@ -48,6 +50,7 @@ interface Props {
 
 export const MessageBubble = memo(function MessageBubble({ msg, onRetry }: Props) {
   const ts = msg.timestamp ? formatTimestamp(msg.timestamp) : null;
+  const { t } = useI18n();
 
   if (msg.type === "user") {
     return (
@@ -83,7 +86,7 @@ export const MessageBubble = memo(function MessageBubble({ msg, onRetry }: Props
   }
 
   if (msg.type === "error") {
-    const hint = getRetryHint(msg.content);
+    const hint = getRetryHint(msg.content, t as unknown as Record<string, string>);
     return (
       <div className="flex gap-3">
         <AgentAvatar />

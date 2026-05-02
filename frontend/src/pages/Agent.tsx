@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, useMemo, useCallback, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Send, Loader2, ArrowDown, CheckCircle2, Square, Download, Plus, Paperclip, X, Users } from "lucide-react";
+import { Send, Loader2, ArrowDown, CheckCircle2, Square, Download, Plus, Paperclip, X, Users, Volume2, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 import { useAgentStore } from "@/stores/agent";
 import { useSSE } from "@/hooks/useSSE";
+import { useSwarmRunner } from "@/hooks/useSwarmRunner";
 import { useI18n } from "@/lib/i18n";
+import { soundEnabled, toggleSound, playClick } from "@/lib/sounds";
 import { api } from "@/lib/api";
 import type { AgentMessage, ToolCallEntry } from "@/types/agent";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
@@ -12,7 +14,7 @@ import { WelcomeScreen } from "@/components/chat/WelcomeScreen";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ThinkingTimeline } from "@/components/chat/ThinkingTimeline";
 import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
-import { SwarmDashboard, type SwarmAgent, type SwarmDashboardProps } from "@/components/chat/SwarmDashboard";
+import { SwarmDashboard } from "@/components/chat/SwarmDashboard";
 
 /* ---------- Message grouping ---------- */
 type MsgGroup =
@@ -37,6 +39,29 @@ function groupMessages(msgs: AgentMessage[]): MsgGroup[] {
 
 const act = () => useAgentStore.getState();
 
+/* ---------- Sound toggle button ---------- */
+function SoundToggle() {
+  const [enabled, setEnabled] = useState(soundEnabled());
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        const next = toggleSound();
+        setEnabled(next);
+      }}
+      className={`
+        px-2.5 py-2.5 rounded-xl border text-muted-foreground
+        hover:text-foreground hover:bg-muted transition-colors
+        ${enabled ? "text-primary/70" : "opacity-50"}
+      `}
+      title={enabled ? t.soundOn : t.soundOff}
+    >
+      {enabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+    </button>
+  );
+}
+
 /* ---------- Component ---------- */
 export function Agent() {
   const [input, setInput] = useState("");
@@ -55,9 +80,7 @@ export function Agent() {
   const uploadMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [swarmPreset, setSwarmPreset] = useState<{ name: string; title: string } | null>(null);
-  const swarmCancelRef = useRef(false);
-  const [swarmDash, setSwarmDash] = useState<SwarmDashboardProps | null>(null);
-  const swarmDashRef = useRef<SwarmDashboardProps | null>(null);
+  const { runSwarm, swarmDash, cancelSwarm } = useSwarmRunner();
 
   const messages = useAgentStore(s => s.messages);
   const streamingText = useAgentStore(s => s.streamingText);
@@ -136,7 +159,7 @@ export function Agent() {
           agentMsgs.push({ id: m.message_id, type: "user", content: m.content, timestamp: ts });
         } else if (runId) {
           // Show text answer first (if non-empty), then chart card
-          if (m.content && m.content !== "Strategy execution completed.") {
+          if (m.content && m.content !== t.strategyCompleted) {
             agentMsgs.push({ id: m.message_id + "_ans", type: "answer", content: m.content, timestamp: ts });
           }
           agentMsgs.push({ id: m.message_id, type: "run_complete", content: "", runId, metrics, timestamp: ts + 1 });
@@ -248,7 +271,7 @@ export function Agent() {
       "attempt.failed": (d) => {
         touch();
         act().clearStreaming();
-        act().addMessage({ id: "", type: "error", content: String(d.error || "Execution failed"), timestamp: Date.now() });
+        act().addMessage({ id: "", type: "error", content: String(d.error || t.executionFailed), timestamp: Date.now() });
         act().setStatus("idle");
         scrollToBottom();
       },
@@ -284,214 +307,32 @@ export function Agent() {
 
   useEffect(() => () => doDisconnect(), [doDisconnect]);
 
-  /* Safety timeout: if streaming but no SSE event for 90s, reset to idle */
+  /* Safety timeout: if streaming but no SSE event for TIMEOUT_MS, reset to idle */
+  const STREAMING_TIMEOUT_MS = 120_000; // configurable — 2 minutes default
+  const WARNING_BEFORE_MS = 30_000; // show countdown warning 30s before timeout
+
   useEffect(() => {
     if (status !== "streaming") return;
+    let warned = false;
     const timer = setInterval(() => {
-      if (lastEventRef.current && Date.now() - lastEventRef.current > 90_000 && act().status === "streaming") {
+      if (!lastEventRef.current) return;
+      const elapsed = Date.now() - lastEventRef.current;
+      if (elapsed > STREAMING_TIMEOUT_MS && act().status === "streaming") {
         act().setStatus("idle");
-        toast.warning("Execution timed out, automatically stopped");
+        toast.warning(t.executionTimeout);
+      } else if (!warned && elapsed > STREAMING_TIMEOUT_MS - WARNING_BEFORE_MS && act().status === "streaming") {
+        warned = true;
+        toast.warning(t.streamingTimeoutSoon.replace("{s}", String(Math.ceil((STREAMING_TIMEOUT_MS - elapsed) / 1000))));
       }
-    }, 10_000);
+    }, 5_000);
     return () => clearInterval(timer);
   }, [status]);
 
-  const runSwarm = async (presetName: string, presetTitle: string, prompt: string) => {
-    let sid = act().sessionId;
-    if (!sid) {
-      try {
-        const session = await api.createSession(`[Swarm] ${presetTitle}: ${prompt.slice(0, 30)}`);
-        sid = session.session_id;
-        act().setSessionId(sid);
-        setSearchParams({ session: sid }, { replace: true });
-      } catch { /* continue without session */ }
-    }
-
-    act().addMessage({ id: "", type: "user", content: `[${presetTitle}] ${prompt}`, timestamp: Date.now() });
-    act().setStatus("streaming");
-    // Add a placeholder swarm-progress message (rendered as SwarmDashboard)
-    act().addMessage({ id: "swarm-progress", type: "answer", content: "", timestamp: Date.now() });
+  // Swarm runner is now in useSwarmRunner hook — call it here with setSearchParams
+  const handleRunSwarm = useCallback(async (presetName: string, presetTitle: string, prompt: string) => {
     forceScrollToBottom();
-    swarmCancelRef.current = false;
-
-    // Initialize dashboard state
-    const dash: SwarmDashboardProps = {
-      preset: presetTitle,
-      agents: {},
-      agentOrder: [],
-      currentLayer: 0,
-      finished: false,
-      finalStatus: "",
-      startTime: Date.now(),
-      completedSummaries: [],
-      finalReport: "",
-    };
-    swarmDashRef.current = dash;
-    setSwarmDash({ ...dash });
-
-    const ensureAgent = (agentId: string): SwarmAgent => {
-      if (!dash.agents[agentId]) {
-        dash.agents[agentId] = {
-          id: agentId, status: "waiting", tool: "", iters: 0,
-          startedAt: 0, elapsed: 0, lastText: "", summary: "",
-        };
-        dash.agentOrder.push(agentId);
-      }
-      return dash.agents[agentId];
-    };
-
-    const flush = () => { lastEventRef.current = Date.now(); swarmDashRef.current = dash; setSwarmDash({ ...dash }); scrollToBottom(); };
-
-    try {
-      const result = await api.createSwarmRun(presetName, { goal: prompt });
-      const runId = result.id;
-      const sseUrl = `/swarm/runs/${runId}/events`;
-      const evtSource = new EventSource(sseUrl);
-      let sseFinished = false;
-
-      evtSource.addEventListener("layer_started", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          dash.currentLayer = d.data?.layer ?? 0;
-          flush();
-        } catch {}
-      });
-
-      evtSource.addEventListener("task_started", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          const agentId = d.agent_id || "";
-          if (agentId) {
-            const a = ensureAgent(agentId);
-            a.status = "running";
-            a.startedAt = Date.now();
-            flush();
-          }
-        } catch {}
-      });
-
-      evtSource.addEventListener("worker_text", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          const agentId = d.agent_id || "";
-          const content = (d.data?.content || "").trim();
-          if (agentId && content) {
-            const a = ensureAgent(agentId);
-            const lastLine = content.split("\n").pop()?.trim() || "";
-            if (lastLine) a.lastText = lastLine.slice(0, 60);
-            flush();
-          }
-        } catch {}
-      });
-
-      evtSource.addEventListener("tool_call", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          const agentId = d.agent_id || "";
-          const tool = d.data?.tool || "";
-          if (agentId && tool) {
-            const a = ensureAgent(agentId);
-            a.tool = tool;
-            a.iters++;
-            flush();
-          }
-        } catch {}
-      });
-
-      evtSource.addEventListener("tool_result", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          const agentId = d.agent_id || "";
-          if (agentId) {
-            const a = ensureAgent(agentId);
-            const ok = (d.data?.status || "ok") === "ok";
-            a.tool = `${a.tool} ${ok ? "\u2713" : "\u2717"}`;
-            a.elapsed = a.startedAt ? Date.now() - a.startedAt : 0;
-            flush();
-          }
-        } catch {}
-      });
-
-      evtSource.addEventListener("task_completed", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          const agentId = d.agent_id || "";
-          if (agentId) {
-            const a = ensureAgent(agentId);
-            a.status = "done";
-            a.elapsed = a.startedAt ? Date.now() - a.startedAt : 0;
-            a.iters = d.data?.iterations ?? a.iters;
-            const summary = d.data?.summary || "";
-            if (summary) {
-              a.summary = summary;
-              dash.completedSummaries.push({ agentId, summary });
-            }
-            flush();
-          }
-        } catch {}
-      });
-
-      evtSource.addEventListener("task_failed", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          const agentId = d.agent_id || "";
-          if (agentId) {
-            const a = ensureAgent(agentId);
-            a.status = "failed";
-            a.elapsed = a.startedAt ? Date.now() - a.startedAt : 0;
-            const error = (d.data?.error || "").slice(0, 80);
-            dash.completedSummaries.push({ agentId, summary: `FAILED: ${error}` });
-            flush();
-          }
-        } catch {}
-      });
-
-      evtSource.addEventListener("task_retry", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          const agentId = d.agent_id || "";
-          if (agentId) { ensureAgent(agentId).status = "retry"; flush(); }
-        } catch {}
-      });
-
-      evtSource.addEventListener("done", () => { sseFinished = true; evtSource.close(); });
-      evtSource.onerror = () => { if (!sseFinished) evtSource.close(); };
-
-      // Poll for completion
-      for (let i = 0; i < 720; i++) {
-        await new Promise(r => setTimeout(r, 2500));
-        if (swarmCancelRef.current) { evtSource.close(); break; }
-        try {
-          const run = await api.getSwarmRun(runId);
-          const rs = String(run.status || "");
-          if (["completed", "failed", "cancelled"].includes(rs)) {
-            evtSource.close();
-            dash.finished = true;
-            dash.finalStatus = rs;
-            const report = String(run.final_report || "");
-            if (!report) {
-              const tasks = (run.tasks || []) as Array<{ agent_id: string; summary?: string }>;
-              dash.finalReport = tasks
-                .filter(t => t.summary && !t.summary.startsWith("Worker hit iteration limit"))
-                .map(t => `### ${t.agent_id}\n${t.summary}`)
-                .join("\n\n") || "Swarm completed.";
-            } else {
-              dash.finalReport = report;
-            }
-            flush();
-            act().setStatus("idle");
-            return;
-          }
-        } catch {}
-      }
-      evtSource.close();
-      act().addMessage({ id: "", type: "error", content: "Swarm timed out", timestamp: Date.now() });
-      act().setStatus("idle");
-    } catch (err) {
-      act().setStatus("error");
-      act().addMessage({ id: "", type: "error", content: `Swarm failed: ${err instanceof Error ? err.message : "Unknown"}`, timestamp: Date.now() });
-    }
-  };
+    runSwarm(presetName, presetTitle, prompt, setSearchParams);
+  }, [runSwarm, setSearchParams, forceScrollToBottom]);
 
   const runPrompt = async (prompt: string) => {
     if (!prompt.trim() || status === "streaming") return;
@@ -506,8 +347,9 @@ export function Agent() {
 
     if (attachment) {
       finalPrompt = `[Uploaded file: ${attachment.filename}, path: ${attachment.filePath}]\n\n${finalPrompt}`;
-      setAttachment(null);
+      // Only clear attachment after successful send (in the try block)
     }
+    const pendingAttachment = attachment; // preserve for error recovery
     setInput("");
     act().addMessage({ id: "", type: "user", content: finalPrompt, timestamp: Date.now() });
     act().setStatus("streaming");
@@ -524,6 +366,8 @@ export function Agent() {
       }
       setupSSE(sid);
       await api.sendMessage(sid, finalPrompt);
+      // Clear attachment only after successful send
+      if (pendingAttachment) setAttachment(null);
     } catch {
       act().setStatus("error");
       toast.error(t.sendFailed);
@@ -534,7 +378,7 @@ export function Agent() {
   const handleSubmit = (e: FormEvent) => { e.preventDefault(); runPrompt(input.trim()); };
 
   const handleCancel = async () => {
-    swarmCancelRef.current = true;
+    cancelSwarm();
     if (!sessionId) {
       act().setStatus("idle");
       return;
@@ -544,9 +388,9 @@ export function Agent() {
       act().setStatus("idle");
       act().clearStreaming();
       useAgentStore.setState({ toolCalls: [] });
-      toast.info("Cancel request sent");
+      toast.info(t.cancelSent);
     } catch {
-      toast.error("Cancel failed");
+      toast.error(t.cancelFailed);
     }
   };
 
@@ -569,19 +413,19 @@ export function Agent() {
 
   const handleExport = () => {
     if (messages.length === 0) return;
-    const lines: string[] = [`# Chat Export`, ``, `Export time: ${new Date().toLocaleString()}`, ``];
+    const lines: string[] = [t.exportTitle, ``, `${t.exportTime}: ${new Date().toLocaleString()}`, ``];
     for (const msg of messages) {
       const time = new Date(msg.timestamp).toLocaleString();
       if (msg.type === "user") {
-        lines.push(`## User (${time})`, ``, msg.content, ``);
+        lines.push(`${t.exportUser} (${time})`, ``, msg.content, ``);
       } else if (msg.type === "answer") {
-        lines.push(`## Assistant (${time})`, ``, msg.content, ``);
+        lines.push(`${t.exportAssistant} (${time})`, ``, msg.content, ``);
       } else if (msg.type === "error") {
-        lines.push(`## Error (${time})`, ``, msg.content, ``);
+        lines.push(`${t.exportError} (${time})`, ``, msg.content, ``);
       } else if (msg.type === "tool_call") {
-        lines.push(`> Tool call: ${msg.tool || "unknown"}`, ``);
+        lines.push(`${t.exportToolCall}: ${msg.tool || t.unknown}`, ``);
       } else if (msg.type === "run_complete") {
-        lines.push(`> Backtest complete: ${msg.runId || ""}`, ``);
+        lines.push(`${t.exportRunComplete}: ${msg.runId || ""}`, ``);
       }
     }
     const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
@@ -604,11 +448,11 @@ export function Agent() {
     ];
     const lowered = file.name.toLowerCase();
     if (blockedExts.some((ext) => lowered.endsWith(ext))) {
-      toast.error("Executables and archives are not allowed");
+      toast.error(t.executablesNotAllowed);
       return;
     }
     if (file.size > 50 * 1024 * 1024) {
-      toast.error("File size exceeds 50 MB limit");
+      toast.error(t.fileSizeExceeded);
       return;
     }
     setUploading(true);
@@ -616,9 +460,9 @@ export function Agent() {
     try {
       const result = await api.uploadFile(file);
       setAttachment({ filename: result.filename, filePath: result.file_path });
-      toast.success(`Uploaded: ${result.filename}`);
+      toast.success(t.uploaded.replace("{name}", result.filename));
     } catch (err) {
-      toast.error(`Upload failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+      toast.error(t.uploadFailed.replace("{err}", err instanceof Error ? err.message : t.unknownError));
     } finally {
       setUploading(false);
     }
@@ -705,7 +549,7 @@ export function Agent() {
                       {running
                         ? <Loader2 className="h-3 w-3 animate-spin text-primary shrink-0" />
                         : <CheckCircle2 className="h-3 w-3 text-success/60 shrink-0" />}
-                      <span>Step {toolCalls.length} · {latest.tool}</span>
+                      <span>{t.stepN.replace("{n}", String(toolCalls.length))} · {latest.tool}</span>
                     </div>
                   );
                 })()}
@@ -721,7 +565,7 @@ export function Agent() {
             onClick={forceScrollToBottom}
             className="sticky bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs font-medium shadow-lg hover:opacity-90 transition-opacity z-10"
           >
-            <ArrowDown className="h-3 w-3" /> New messages
+            <ArrowDown className="h-3 w-3" /> {t.newMessages}
           </button>
         )}
         <ConversationTimeline messages={messages} containerRef={listRef} />
@@ -757,7 +601,7 @@ export function Agent() {
           {uploading && (
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Uploading...
+              {t.uploading}
             </div>
           )}
           <div className="flex gap-2 items-end">
@@ -768,7 +612,7 @@ export function Agent() {
                 onClick={() => setShowUploadMenu(prev => !prev)}
                 disabled={status === "streaming" || uploading}
                 className="w-9 h-9 rounded-full border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 shrink-0"
-                title="More options"
+                title={t.moreOptions}
               >
                 <Plus className="h-4 w-4" />
               </button>
@@ -780,20 +624,20 @@ export function Agent() {
                     className="w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors flex items-center gap-2"
                   >
                     <Paperclip className="h-4 w-4" />
-                    Upload PDF document
+                    {t.uploadPdf}
                   </button>
                   <div className="border-t my-1" />
                   <button
                     type="button"
                     onClick={() => {
                       setShowUploadMenu(false);
-                      setSwarmPreset({ name: "auto", title: "Agent Swarm" });
+                      setSwarmPreset({ name: "auto", title: t.agentSwarm });
                       inputRef.current?.focus();
                     }}
                     className="w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors flex items-center gap-2"
                   >
                     <Users className="h-4 w-4" />
-                    Agent Swarm
+                    {t.agentSwarm}
                   </button>
                 </div>
               )}
@@ -830,17 +674,19 @@ export function Agent() {
                 type="button"
                 onClick={handleExport}
                 className="px-3 py-2.5 rounded-xl border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                title="Export chat"
+                title={t.exportChat}
               >
                 <Download className="h-4 w-4" />
               </button>
             )}
+            {/* Sound toggle */}
+            <SoundToggle />
             {status === "streaming" ? (
               <button
                 type="button"
                 onClick={handleCancel}
                 className="px-4 py-2.5 rounded-xl bg-destructive text-destructive-foreground text-sm font-medium hover:opacity-90 transition-opacity"
-                title="Stop generation"
+                title={t.stopGeneration}
               >
                 <Square className="h-4 w-4" />
               </button>

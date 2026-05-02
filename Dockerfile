@@ -35,6 +35,13 @@ COPY --from=frontend-build /app/frontend/dist frontend/dist
 # Install CLI entrypoint
 RUN pip install --no-cache-dir -e .
 
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser \
+    && mkdir -p /app/agent/runs /app/agent/sessions /app/agent/uploads /app/agent/.swarm \
+    && chown -R appuser:appuser /app/agent
+
+USER appuser
+
 # Default port
 EXPOSE 8899
 

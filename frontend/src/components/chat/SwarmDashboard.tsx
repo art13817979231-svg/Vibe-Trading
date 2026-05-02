@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { CheckCircle2, XCircle, Loader2, Clock, Timer } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { useI18n } from "@/lib/i18n";
 import remarkGfm from "remark-gfm";
 
 export interface SwarmAgent {
@@ -59,24 +60,27 @@ function StatusIcon({ status }: { status: SwarmAgent["status"] }) {
 }
 
 function StatusLabel({ status }: { status: SwarmAgent["status"] }) {
+  const { t } = useI18n();
   switch (status) {
-    case "running": return <span className="text-primary font-medium">running</span>;
-    case "done": return <span className="text-emerald-500 font-medium">done</span>;
-    case "failed": return <span className="text-red-500 font-medium">failed</span>;
-    case "retry": return <span className="text-amber-500 font-medium">retry</span>;
-    default: return <span className="text-muted-foreground/50">waiting</span>;
+    case "running": return <span className="text-primary font-medium">{t.swarmStatusRunning}</span>;
+    case "done": return <span className="text-emerald-500 font-medium">{t.swarmStatusDone}</span>;
+    case "failed": return <span className="text-red-500 font-medium">{t.swarmStatusFailed}</span>;
+    case "retry": return <span className="text-amber-500 font-medium">{t.swarmStatusRetry}</span>;
+    default: return <span className="text-muted-foreground/50">{t.swarmStatusWaiting}</span>;
   }
 }
 
 export function SwarmDashboard(props: SwarmDashboardProps) {
+  const { t } = useI18n();
   const { preset, agents, agentOrder, finished, finalStatus, startTime, completedSummaries, finalReport } = props;
   const [now, setNow] = useState(Date.now());
   const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
   useEffect(() => {
+    if (finished) return;
     timerRef.current = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(timerRef.current);
-  }, []);
+  }, [finished]);
 
   const elapsedTotal = (now - startTime) / 1000;
   const doneCount = Object.values(agents).filter(a => a.status === "done" || a.status === "failed").length;
@@ -108,7 +112,7 @@ export function SwarmDashboard(props: SwarmDashboardProps) {
               </span>
             ) : (
               <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary font-medium">
-                RUNNING
+                {t.swarmRunning}
               </span>
             )}
           </div>
@@ -200,7 +204,7 @@ export function SwarmDashboard(props: SwarmDashboardProps) {
       {/* Final report */}
       {finalReport && (
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-5 py-4">
-          <div className="text-xs font-semibold text-emerald-500 mb-3">Final Report</div>
+          <div className="text-xs font-semibold text-emerald-500 mb-3">{t.swarmFinalReport}</div>
           <div className="prose prose-sm dark:prose-invert max-w-none">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{finalReport}</ReactMarkdown>
           </div>

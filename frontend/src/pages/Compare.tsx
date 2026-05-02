@@ -50,6 +50,24 @@ function runLabel(r: RunListItem): string {
   return r.run_id;
 }
 
+const METRIC_I18N_KEYS_COMPARE: Record<string, string> = {
+  total_return: "compareTotalReturn",
+  annualized_return: "compareAnnualizedReturn",
+  sharpe: "compareSharpeRatio",
+  calmar_ratio: "compareCalmarRatio",
+  sortino_ratio: "compareSortinoRatio",
+  max_drawdown: "compareMaxDrawdown",
+  volatility: "compareVolatility",
+  win_rate: "compareWinRate",
+  profit_factor: "compareProfitFactor",
+  avg_win: "compareAvgWin",
+  avg_loss: "compareAvgLoss",
+  trade_count: "compareTrades",
+  max_consecutive_losses: "compareMaxConsecLosses",
+  exposure_time: "compareExposureTime",
+  avg_holding_period: "compareAvgHoldingPeriod",
+};
+
 const METRICS: MetricDef[] = [
   { key: "total_return",           label: "Total Return",         type: "pct", higherIsBetter: true },
   { key: "annualized_return",      label: "Annualized Return",    type: "pct", higherIsBetter: true },
@@ -293,11 +311,13 @@ export function Compare() {
             </thead>
             <tbody>
               {METRICS.map(({ key, label, type, higherIsBetter }) => {
+                const i18nKey = METRIC_I18N_KEYS_COMPARE[key];
+                const displayLabel = i18nKey ? (t as unknown as Record<string, string>)[i18nKey] || label : label;
                 const lv = resolveMetric(leftData, key);
                 const rv = resolveMetric(rightData, key);
                 return (
                   <tr key={key} className="border-b last:border-0 hover:bg-muted/20">
-                    <td className="px-4 py-2.5 font-medium">{label}</td>
+                    <td className="px-4 py-2.5 font-medium">{displayLabel}</td>
                     <td className="px-4 py-2.5 text-right font-mono tabular-nums">{fmt(lv, type)}</td>
                     <td className="px-4 py-2.5 text-right font-mono tabular-nums">{fmt(rv, type)}</td>
                     <td className={cn("px-4 py-2.5 text-right font-mono tabular-nums font-semibold", diffClass(lv, rv, higherIsBetter))}>{diffStr(lv, rv, type)}</td>

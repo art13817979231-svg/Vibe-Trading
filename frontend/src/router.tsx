@@ -1,6 +1,7 @@
 import { Suspense, lazy, type ComponentType } from "react";
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 import { Layout } from "@/components/layout/Layout";
+import { useI18n } from "@/lib/i18n";
 
 const Home = lazy(() => import("@/pages/Home").then((m) => ({ default: m.Home })));
 const Agent = lazy(() => import("@/pages/Agent").then((m) => ({ default: m.Agent })));
@@ -10,11 +11,15 @@ const RunDetail = lazy(() =>
 const Compare = lazy(() =>
   import("@/pages/Compare").then((m) => ({ default: m.Compare })),
 );
+const Guide = lazy(() =>
+  import("@/pages/Guide").then((m) => ({ default: m.Guide })),
+);
 
 function PageLoader() {
+  const { t } = useI18n();
   return (
     <div className="flex h-[60vh] items-center justify-center text-muted-foreground">
-      Loading…
+      {t.loadingDots}
     </div>
   );
 }
@@ -35,6 +40,8 @@ export const router = createBrowserRouter([
       { path: "/agent", element: wrap(Agent) },
       { path: "/runs/:runId", element: wrap(RunDetail) },
       { path: "/compare", element: wrap(Compare) },
+      { path: "/guide", element: wrap(Guide) },
+      { path: "*", element: <Navigate to="/" replace /> },
     ],
   },
 ]);

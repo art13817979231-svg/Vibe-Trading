@@ -9,10 +9,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import signal
 import time
 import csv
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -171,12 +173,20 @@ class MessageResponse(BaseModel):
 # FastAPI Application
 # ============================================================================
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup: run preflight checks."""
+    from src.preflight import run_preflight
+    run_preflight(console)
+    yield
+
 app = FastAPI(
     title="Vibe-Trading API",
     description="Vibe-Trading API: natural-language finance research, backtesting, and swarm workflows",
     version="5.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS: override with CORS_ORIGINS (comma-separated)
@@ -193,14 +203,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def _run_startup_preflight() -> None:
-    """Run preflight checks on server startup."""
-    from src.preflight import run_preflight
-
-    run_preflight(console)
 
 
 # ============================================================================
@@ -501,13 +503,15 @@ async def list_runs(limit: int = 20):
             try:
                 req_data = json.loads(req_file.read_text(encoding="utf-8"))
                 prompt = req_data.get("prompt")
-            except: pass
-        
+            except (json.JSONDecodeError, OSError):
+                pass
+
         if not prompt and planner_file.exists():
             try:
                 planner_data = json.loads(planner_file.read_text(encoding="utf-8"))
                 prompt = planner_data.get("user_goal") or planner_data.get("goal")
-            except: pass
+            except (json.JSONDecodeError, OSError):
+                pass
             
         if not prompt:
             prompt_file = d / "user_prompt.txt"
@@ -519,14 +523,13 @@ async def list_runs(limit: int = 20):
         metrics_file = d / "artifacts" / "metrics.csv"
         if metrics_file.exists():
             try:
-                import csv
                 with open(metrics_file, 'r', encoding='utf-8') as f:
                     reader = csv.DictReader(f)
                     for row in reader:
                         total_return = float(row.get('total_return', 0) or 0)
                         sharpe = float(row.get('sharpe', 0) or 0)
                         break
-            except:
+            except (ValueError, OSError):
                 pass
         
         run_context = load_run_context(d)
@@ -618,7 +621,6 @@ def _get_session_service():
     if os.getenv("ENABLE_SESSION_RUNTIME", "true").lower() != "true":
         return None
 
-    import asyncio
     from src.session.store import SessionStore
     from src.session.events import EventBus
     from src.session.service import SessionService
@@ -724,7 +726,6 @@ async def update_session(session_id: str, req: UpdateSessionRequest):
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
     if req.title is not None:
         session.title = req.title
-    from datetime import datetime
     session.updated_at = datetime.now().isoformat()
     svc.store.update_session(session)
     return {"status": "updated", "session_id": session_id}
@@ -823,7 +824,7 @@ _BLOCKED_UPLOAD_EXT = {
 }
 
 
-_SHADOW_ID_RE = __import__("re").compile(r"^shadow_[0-9a-f]{8}$")
+_SHADOW_ID_RE = re.compile(r"^shadow_[0-9a-f]{8}$")
 
 
 @app.get("/shadow-reports/{shadow_id}")
@@ -1050,8 +1051,29 @@ def serve_main(argv: list[str] | None = None) -> int:
         print("[dev] Frontend: http://localhost:5173")
         print(f"[dev] API: http://localhost:{args.port}")
     elif frontend_dist.exists():
-        if not any(route.path == "/" for route in app.routes):
-            app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+        # Mount static assets first (js, css, images, etc.)
+        app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="frontend-assets")
+        # Serve specific static files at root (favicon, logo, etc.)
+        for _f in frontend_dist.iterdir():
+            if _f.is_file():
+                _fname = _f.name
+                # Register a simple file route for each root static file
+                def _make_file_route(filepath=_f):
+                    async def _serve_file():
+                        return FileResponse(str(filepath))
+                    return _serve_file
+                app.add_api_route(f"/{_fname}", _make_file_route(), methods=["GET"], include_in_schema=False)
+        # SPA catch-all: any non-API GET request returns index.html
+        _index_html = frontend_dist / "index.html"
+        @app.get("/{path:path}", include_in_schema=False)
+        async def spa_fallback(path: str):
+            # If it matches a known API prefix, let 404 happen naturally
+            if path.startswith((
+                "runs/", "sessions/", "swarm/", "upload/", "api/", "health",
+                "skills", "shadow-reports/", "docs", "redoc", "openapi.json",
+            )):
+                raise HTTPException(status_code=404)
+            return FileResponse(str(_index_html))
         print(f"[prod] Frontend served from {frontend_dist}")
     else:
         print(f"[warn] No frontend build found at {frontend_dist}")

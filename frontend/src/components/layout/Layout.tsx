@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useSearchParams } from "react-router-dom";
-import { BarChart3, Bot, Moon, Sun, Plus, Trash2, Pencil, MessageSquare, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { BarChart3, Bot, Moon, Sun, Plus, Trash2, Pencil, MessageSquare, ChevronsLeft, ChevronsRight, Globe, BookOpen } from "lucide-react";
+import type { Locale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 import { useDarkMode } from "@/hooks/useDarkMode";
@@ -11,12 +12,13 @@ import { ConnectionBanner } from "@/components/layout/ConnectionBanner";
 const NAV = [
   { to: "/", icon: BarChart3, key: "home" as const },
   { to: "/agent", icon: Bot, key: "agent" as const },
+  { to: "/guide", icon: BookOpen, key: "guide" as const },
 ];
 
 export function Layout() {
   const { pathname } = useLocation();
   const [searchParams] = useSearchParams();
-  const { t } = useI18n();
+  const { t, locale, setLocale } = useI18n();
   const { dark, toggle } = useDarkMode();
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
@@ -74,7 +76,7 @@ export function Layout() {
         <div className={cn("border-b", collapsed ? "p-2 flex justify-center" : "p-4")}>
           <Link to="/" className={cn("flex items-center font-bold text-base tracking-tight", collapsed ? "justify-center" : "gap-2")}>
             <BarChart3 className="h-5 w-5 text-primary shrink-0" />
-            {!collapsed && "Vibe-Trading"}
+            {!collapsed && t.home}
           </Link>
         </div>
 
@@ -171,7 +173,7 @@ export function Layout() {
                         <button
                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); setRenameTarget(s.session_id); setRenameValue(s.title || ""); }}
                           className="p-1 text-muted-foreground hover:text-foreground rounded"
-                          title="Rename"
+                          title={t.rename}
                         >
                           <Pencil className="h-3 w-3" />
                         </button>
@@ -201,13 +203,21 @@ export function Layout() {
               <button onClick={toggle} className="p-1.5 text-muted-foreground hover:text-foreground rounded transition-colors" title={dark ? t.lightMode : t.darkMode}>
                 {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
               </button>
-              <button onClick={() => setCollapsed(false)} className="p-1.5 text-muted-foreground hover:text-foreground rounded transition-colors" title="Expand">
+              <button onClick={() => setCollapsed(false)} className="p-1.5 text-muted-foreground hover:text-foreground rounded transition-colors" title={t.expand}>
                 <ChevronsRight className="h-3.5 w-3.5" />
               </button>
             </>
           ) : (
-            <>
-              <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setLocale(locale === "en" ? "zh-CN" : "en")}
+                  className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  title={t.language}
+                >
+                  <Globe className="h-3 w-3" />
+                  {locale === "zh-CN" ? "中文" : "EN"}
+                </button>
                 <button
                   onClick={toggle}
                   className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -219,14 +229,14 @@ export function Layout() {
                   <button
                     onClick={() => setCollapsed(true)}
                     className="p-1 text-muted-foreground hover:text-foreground rounded transition-colors"
-                    title="Collapse"
+                    title={t.collapse}
                   >
                     <ChevronsLeft className="h-3.5 w-3.5" />
                   </button>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground/60">v0.1.5</p>
-            </>
+              <p className="text-xs text-muted-foreground/60">v{__APP_VERSION__}</p>
+            </div>
           )}
         </div>
       </aside>
