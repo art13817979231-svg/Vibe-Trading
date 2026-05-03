@@ -68,7 +68,7 @@ export function useSwarmRunner() {
       try {
         const result = await api.createSwarmRun(presetName, { goal: prompt });
         const runId = result.id;
-        const sseUrl = `/swarm/runs/${runId}/events`;
+        const sseUrl = `${import.meta.env.VITE_API_URL || ""}/swarm/runs/${runId}/events`;
 
         /* ---------- SSE with auto-reconnect (exponential backoff) ---------- */
         let sseFinished = false;
